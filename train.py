@@ -8,7 +8,8 @@ import gymnasium as gym
 import numpy as np
 from stable_baselines3 import PPO
 
-from duel import ACTION_SIZES, OBSERVATION_SIZE, SIGNED_OBSERVATIONS, Controls, DuelClient, ProtocolError
+from duel import ACTION_SIZES, DuelClient, ProtocolError
+from observation import OBSERVATION_SIZE, combat_damage, decode_action, encode_observation
 
 
 class BannerlordDuel(gym.Env):
@@ -16,9 +17,7 @@ class BannerlordDuel(gym.Env):
         super().__init__()
         self.client = client
         self.action_space = gym.spaces.MultiDiscrete(ACTION_SIZES)
-        low = np.zeros(OBSERVATION_SIZE, dtype=np.float32)
-        low[list(SIGNED_OBSERVATIONS)] = -1
-        self.observation_space = gym.spaces.Box(low=low, high=np.ones(OBSERVATION_SIZE, np.float32))
+        self.observation_space = gym.spaces.Box(-1.0, 1.0, (OBSERVATION_SIZE,), np.float32)
         self.opponents = deque(maxlen=8)
         self.opponent = None
         self.learner_side = 1
@@ -27,31 +26,34 @@ class BannerlordDuel(gym.Env):
         super().reset(seed=seed)
         self.learner_side = 1 - self.learner_side
         self.opponent = self.opponents[int(self.np_random.integers(len(self.opponents)))]
-        state = self.client.reset(seed=int(self.np_random.integers(2**31)))
+        self.bout_had_damage = False
+        state = self.client.reset()
         return self._observation(state, self.learner_side), {}
 
     def step(self, action):
         before = self.client.state
         other_side = 1 - self.learner_side
         other_action, _ = self.opponent.predict(self._observation(before, other_side))
-        opponent_controls = Controls(*map(int, other_action))
+        opponent_controls = decode_action(other_action, before.observations[other_side]["self"])
         actions = [opponent_controls, opponent_controls]
-        actions[self.learner_side] = Controls(*map(int, action))
+        actions[self.learner_side] = decode_action(action, before.observations[self.learner_side]["self"])
         after = self.client.step(*actions)
-        damage_taken = before.observations[self.learner_side][0] - after.observations[self.learner_side][0]
-        damage_dealt = before.observations[other_side][0] - after.observations[other_side][0]
-        reward = 0.2 * (damage_dealt - damage_taken)
+        damage_dealt, damage_taken = combat_damage(after.observations[self.learner_side]["combatFeedback"])
+        self.bout_had_damage |= damage_dealt > 0 or damage_taken > 0
+        reward = (0.4 * damage_dealt - 0.2 * damage_taken) / 100
         if after.outcome in ("a_win", "b_win"):
             winner = 0 if after.outcome == "a_win" else 1
             reward += 1 if winner == self.learner_side else -1
         terminated = after.outcome in ("a_win", "b_win", "draw")
         truncated = after.outcome == "timeout"
+        if truncated and not self.bout_had_damage:
+            reward -= 0.1
         info = {"outcome": after.outcome, "learner_side": self.learner_side}
         return self._observation(after, self.learner_side), reward, terminated, truncated, info
 
     @staticmethod
     def _observation(state, side: int) -> np.ndarray:
-        return np.asarray(state.observations[side], dtype=np.float32)
+        return encode_observation(state, side)
 
 
 def snapshot_policy(policy):
