@@ -39,7 +39,7 @@ Both duels contribute to the same policy. Decisions collected per update equal r
 
 ## Duel bridge protocol v2
 
-Use UTF-8 JSON lines on a loopback TCP port, 49317 by default, with one request in flight per duel. A step applies both controls together on the mission thread and reports the result after at least 50 ms of simulated time, rounded to a mission tick. The last input persists between steps. A 250 ms simulation gap truncates the bout on the next matching step. Bouts also time out at 400 steps. A mission change closes the connection.
+Use UTF-8 JSON lines on a loopback TCP port, 49317 by default, with one request in flight per duel. A step applies both controls together on the mission thread and reports the result after at least 50 ms of simulated time, rounded to a mission tick. After 250 ms without a decision, fighters release their controls while the bout continues. Bouts time out at 1200 steps (at least 60 seconds of decision time) or on leaving the arena. A mission change closes the connection.
 
 | Request | Example |
 |---|---|
@@ -70,4 +70,4 @@ Each fighter gets a 31-value observation. Direction groups are one-hot in left, 
 | 15–22 | Own/opponent attack direction groups |
 | 23–30 | Own/opponent guard direction groups |
 
-The server checks a 120-degree horizontal and 60-degree vertical field of view and casts rays from the fighter's eyes to the opponent's head and torso. If neither point is visible, the observation retains the last seen position and age. Live opponent health, motion, and animation fields are zeroed. Python derives damage rewards from each fighter's own health so sight loss alone yields no reward.
+The server checks a 120-degree horizontal and 60-degree vertical field of view and casts rays from the fighter's eyes to the opponent's head and torso. If neither point is visible, the observation retains the last seen position and age. Live opponent health, motion, and animation fields are zeroed. Python derives damage rewards from each fighter's own health. Reward is 0.4 times damage dealt minus 0.2 times damage taken, using fractions of maximum health. Wins earn +1, losses earn -1, and a timeout without damage to either fighter costs 0.1.

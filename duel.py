@@ -261,8 +261,8 @@ def main() -> None:
             for index in range(args.random_bouts):
                 state = client.reset(seed=rng.randrange(2**31))
                 while state.outcome == "running":
-                    if state.step >= 400:
-                        raise ProtocolError("The server did not end the bout within 400 steps.")
+                    if state.step >= 1200:
+                        raise ProtocolError("The server did not end the bout within 1200 steps.")
                     a, b = (Controls(*(rng.randrange(size) for size in ACTION_SIZES)) for _ in range(2))
                     state = client.step(a, b)
                 print(f"Random bout {index + 1}: {state.outcome} after {state.step} steps")
