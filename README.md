@@ -15,9 +15,31 @@ py -m venv .venv
 
 The smoke test checks a hit and a block first. `--full-controls` adds footwork, aim, facing away and reacquiring a target, kick animation, and all directional attack and guard inputs. Checkpoints from protocol v1 use a different action and observation space. Start a new run.
 
+## Parallel training
+
+On one private Duel server, stand on foot as an admin, face an open area, and enter `$combattest batch 20`. The server looks for 20 separated sites with navigable ground and opens ports 49317 through 49336. If the map does not have enough usable space nearby, the command reports how many sites it found. If a port is unavailable, it closes any listeners already opened for that batch.
+
+```powershell
+.\.venv\Scripts\python.exe train.py --arenas 20 --rollout-steps 64 --updates 2 --output runs/batch-20
+```
+
+For a different range, specify the first port in chat, for example `$combattest batch 20 49400`, and pass `--port 49400` to the trainer. Use `$combattest stop` to stop the batch.
+
+### Placing arenas individually
+
+Use one private Duel server. As an admin, spawn on foot, face clear ground, and enter `$combattest train 49317`. Move to another clear spot at least 16 meters away from the first arena's center. Face the second area and enter `$combattest train 49318`. Each arena is centered three meters in front of you when you enter the command. If a fighter leaves its arena's six-meter radius, that bout times out and resets independently. Verify each bridge with `duel.py --port <port>`, then start one trainer.
+
+Use `$combattest stop 49318` to remove just the second arena, or `$combattest stop` to stop all training arenas.
+
+```powershell
+.\.venv\Scripts\python.exe train.py --ports 49317 49318 --rollout-steps 256 --updates 50 --output runs/parallel
+```
+
+Both duels contribute to the same policy. Decisions collected per update equal rollout steps multiplied by the number of duels. The example collects 512 decisions per update, matching the single-duel default. Omitting `--ports` still runs one duel on port 49317. Every bridge listens on loopback and handles one duel at a time. A parallel batch waits for its slowest duel.
+
 ## Duel bridge protocol v2
 
-Use UTF-8 JSON lines on loopback TCP port 49317 with one request in flight. A step applies both controls together on the mission thread and reports the result after at least 50 ms of simulated time, rounded to a mission tick. The last input persists between steps. A 250 ms simulation gap truncates the bout on the next matching step. Bouts also time out at 400 steps. A mission change closes the connection.
+Use UTF-8 JSON lines on a loopback TCP port, 49317 by default, with one request in flight per duel. A step applies both controls together on the mission thread and reports the result after at least 50 ms of simulated time, rounded to a mission tick. The last input persists between steps. A 250 ms simulation gap truncates the bout on the next matching step. Bouts also time out at 400 steps. A mission change closes the connection.
 
 | Request | Example |
 |---|---|
