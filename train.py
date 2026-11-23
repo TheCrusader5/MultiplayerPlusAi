@@ -1,22 +1,23 @@
 """Train a policy against frozen copies of itself in the Bannerlord duel."""
 import argparse
 from collections import deque
-from copy import deepcopy
+from io import BytesIO
 from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
 from stable_baselines3 import PPO
 
-from duel import Action, DuelClient, OBSERVATION_SIZE, ProtocolError
+from duel import ACTION_SIZES, OBSERVATION_SIZE, SIGNED_OBSERVATIONS, Controls, DuelClient, ProtocolError
 
 
 class BannerlordDuel(gym.Env):
     def __init__(self, client: DuelClient):
         super().__init__()
         self.client = client
-        self.action_space = gym.spaces.Discrete(len(Action))
-        low = np.array([0, 0, 0, -1, -1, 0, 0, 0, 0], dtype=np.float32)
+        self.action_space = gym.spaces.MultiDiscrete(ACTION_SIZES)
+        low = np.zeros(OBSERVATION_SIZE, dtype=np.float32)
+        low[list(SIGNED_OBSERVATIONS)] = -1
         self.observation_space = gym.spaces.Box(low=low, high=np.ones(OBSERVATION_SIZE, np.float32))
         self.opponents = deque(maxlen=8)
         self.opponent = None
@@ -33,8 +34,9 @@ class BannerlordDuel(gym.Env):
         before = self.client.state
         other_side = 1 - self.learner_side
         other_action, _ = self.opponent.predict(self._observation(before, other_side))
-        actions = [Action(int(other_action)), Action(int(other_action))]
-        actions[self.learner_side] = Action(int(action))
+        opponent_controls = Controls(*map(int, other_action))
+        actions = [opponent_controls, opponent_controls]
+        actions[self.learner_side] = Controls(*map(int, action))
         after = self.client.step(*actions)
         damage_taken = before.observations[self.learner_side][0] - after.observations[self.learner_side][0]
         damage_dealt = before.observations[other_side][0] - after.observations[other_side][0]
@@ -50,6 +52,17 @@ class BannerlordDuel(gym.Env):
     @staticmethod
     def _observation(state, side: int) -> np.ndarray:
         return np.asarray(state.observations[side], dtype=np.float32)
+
+
+def snapshot_policy(policy):
+    # Rebuild from weights so the opponent carries no live tensors from PPO's last update.
+    with BytesIO() as checkpoint:
+        policy.save(checkpoint)
+        checkpoint.seek(0)
+        opponent = type(policy).load(checkpoint, device=policy.device)
+    opponent.requires_grad_(False)
+    opponent.set_training_mode(False)
+    return opponent
 
 
 def main():
@@ -68,11 +81,11 @@ def main():
             env = BannerlordDuel(client)
             model = PPO("MlpPolicy", env, n_steps=args.rollout_steps, batch_size=64,
                         seed=args.seed, device="cpu", verbose=1)
-            env.opponents.append(deepcopy(model.policy))
+            env.opponents.append(snapshot_policy(model.policy))
             for update in range(1, args.updates + 1):
                 model.learn(total_timesteps=args.rollout_steps, reset_num_timesteps=False)
                 model.save(args.output / f"checkpoint-{update:04d}")
-                env.opponents.append(deepcopy(model.policy))
+                env.opponents.append(snapshot_policy(model.policy))
     except (OSError, ProtocolError) as exc:
         parser.exit(1, f"Training stopped: {exc}\n")
 
