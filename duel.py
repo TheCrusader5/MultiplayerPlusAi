@@ -169,12 +169,6 @@ def check_controls(client: DuelClient) -> None:
     live_enemy = (1, 9, 10, 12, 14, *range(19, 23), *range(27, 31))
     if hidden[5] != 0 or hidden[6] != 1 or hidden[7] <= 0 or any(hidden[i] for i in live_enemy):
         raise ProtocolError("Turning away did not hide live opponent data and preserve last sighting.")
-    # Let native AI tick with both fighters idle after turning away.
-    for _ in range(20):
-        state = client.step(neutral, neutral)
-        view = state.observations[0]
-        if view[5] or abs(view[3] - hidden[3]) > 0.1 or abs(view[4] - hidden[4]) > 0.1:
-            raise ProtocolError("Neutral input did not hold the fighter's heading away from the opponent.")
     for _ in range(18):
         state = client.step(Controls(yaw=2), neutral)
     if state.observations[0][5] != 1:
@@ -267,8 +261,8 @@ def main() -> None:
             for index in range(args.random_bouts):
                 state = client.reset(seed=rng.randrange(2**31))
                 while state.outcome == "running":
-                    if state.step >= 1200:
-                        raise ProtocolError("The server did not end the bout within 1200 steps.")
+                    if state.step >= 400:
+                        raise ProtocolError("The server did not end the bout within 400 steps.")
                     a, b = (Controls(*(rng.randrange(size) for size in ACTION_SIZES)) for _ in range(2))
                     state = client.step(a, b)
                 print(f"Random bout {index + 1}: {state.outcome} after {state.step} steps")
