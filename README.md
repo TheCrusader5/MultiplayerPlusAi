@@ -4,7 +4,7 @@ Python tools for training Bannerlord duel bots against frozen copies of their ow
 
 ## Run locally
 
-Use Python 3.10 or later. Start the dedicated server and its duel bridge on the same machine as Python. The current C# combat test still needs that bridge. The protocol below specifies what it must implement.
+Use Python 3.10 or later. Run Python on the machine hosting the dedicated server. Join a private Duel server as an admin, spawn on foot, face clear ground, and enter `$combattest train` in chat. That starts the listener on `127.0.0.1:49317` and sets the bots' spawn location. Run these commands from the Python repo. To stop the listener, enter `$combattest stop` in chat.
 
 ```powershell
 py -m venv .venv
@@ -17,7 +17,7 @@ The smoke test checks that a released left swing damages an idle defender and th
 
 ## Duel bridge protocol
 
-Listen on loopback TCP port 49317 by default. Exchange one UTF-8 JSON object per line, version 1, with one request in flight. Use 50 ms of simulation time per step. The bridge must apply both actions on the mission thread for the same interval, then snapshot the result. Socket waits belong off the mission thread. If a deadline is missed or the mission changes, return an error and end the episode. Keep a bout within 400 decisions.
+Listen on loopback TCP port 49317 by default. Exchange one UTF-8 JSON object per line, version 1, with one request in flight. The bridge applies both actions together on the mission thread and snapshots after at least 50 ms of simulation time, rounded to a mission tick. It holds the last action between requests. A gap of 250 ms of simulation time ends the bout with a timeout, which is returned on the next matching step request. A mission change closes the connection. Each bout is capped at 400 decisions. The current server uses fixed spawn positions and accepts the reset seed for future use.
 
 | Request | Fields |
 |---|---|
