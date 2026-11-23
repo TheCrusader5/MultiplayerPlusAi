@@ -48,4 +48,4 @@ Each fighter gets a 31-value observation. Direction groups are one-hot in left, 
 | 15–22 | Own/opponent attack direction groups |
 | 23–30 | Own/opponent guard direction groups |
 
-The server checks a 120-degree view cone and casts rays from the fighter's eyes to the opponent's head and torso. If neither point is visible, the observation retains the last seen position and age. Live opponent health, motion, and animation fields are zeroed. Python derives damage rewards from each fighter's own health so sight loss alone yields no reward.
+The server checks a 120-degree horizontal and 60-degree vertical field of view and casts rays from the fighter's eyes to the opponent's head and torso. If neither point is visible, the observation retains the last seen position and age. Live opponent health, motion, and animation fields are zeroed. Python derives damage rewards from each fighter's own health so sight loss alone yields no reward.

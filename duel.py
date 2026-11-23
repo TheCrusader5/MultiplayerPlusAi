@@ -176,11 +176,18 @@ def check_controls(client: DuelClient) -> None:
     print("Yaw and visibility: PASS")
 
     initial = client.reset()
-    for _ in range(5):
+    for _ in range(9):
         state = client.step(Controls(pitch=2), neutral)
-    if state.observations[0][8] - initial.observations[0][8] < 0.15:
-        raise ProtocolError("Pitch did not raise the fighter's aim.")
-    print("Pitch: PASS")
+    raised = state.observations[0]
+    if raised[8] - initial.observations[0][8] < 0.15:
+        raise ProtocolError("Pitch did not raise the fighter's view.")
+    if raised[5] != 0 or raised[6] != 1 or any(raised[i] for i in live_enemy):
+        raise ProtocolError("Looking up did not hide live opponent data.")
+    for _ in range(9):
+        state = client.step(Controls(pitch=1), neutral)
+    if state.observations[0][5] != 1:
+        raise ProtocolError("Looking level did not restore visibility.")
+    print("Pitch and visibility: PASS")
 
     initial = client.reset()
     for _ in range(9):
