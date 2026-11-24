@@ -112,11 +112,13 @@ def main():
     parser.add_argument("--port", type=int, default=49317)
     parser.add_argument("--arenas", type=int, default=1)
     parser.add_argument("--updates", type=int, default=20)
-    parser.add_argument("--rollout-steps", type=int, default=512)
+    parser.add_argument("--rollout-steps", type=int, help="Steps per arena per update (default 512 for a new run).")
+    parser.add_argument("--resume", type=Path, help="Continue from a saved PPO checkpoint.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path, default=Path("runs/duel"))
     args = parser.parse_args()
-    if args.updates < 1 or args.rollout_steps < 64 or args.rollout_steps % 64:
+    if args.updates < 1 or (args.rollout_steps is not None and
+                            (args.rollout_steps < 64 or args.rollout_steps % 64)):
         parser.error("--updates must be positive and --rollout-steps must be a positive multiple of 64.")
     if not 1 <= args.arenas <= 16 or not 1 <= args.port <= 65536 - args.arenas:
         parser.error("Choose 1 to 16 arenas and a valid consecutive port range.")
@@ -134,10 +136,15 @@ def main():
                 executor = resources.enter_context(ThreadPoolExecutor(max_workers=len(duels)))
                 env = VecMonitor(ParallelDuelEnv(duels, executor))
 
+            if args.resume is None:
+                model = PPO("MlpPolicy", env, n_steps=args.rollout_steps or 512, batch_size=64,
+                            seed=args.seed, device="cpu", verbose=1)
+            else:
+                overrides = {} if args.rollout_steps is None else {"n_steps": args.rollout_steps}
+                model = PPO.load(args.resume, env=env, device="cpu", **overrides)
+                print(f"Resumed {args.resume} at {model.num_timesteps:,} timesteps.", flush=True)
             args.output.mkdir(parents=True, exist_ok=False)
-            model = PPO("MlpPolicy", env, n_steps=args.rollout_steps, batch_size=64,
-                        seed=args.seed, device="cpu", verbose=1)
-            decisions_per_update = args.rollout_steps * len(duels)
+            decisions_per_update = model.n_steps * len(duels)
             for update in range(1, args.updates + 1):
                 model.learn(total_timesteps=decisions_per_update, reset_num_timesteps=False)
                 model.save(args.output / f"checkpoint-{update:04d}")
