@@ -34,6 +34,7 @@ class DuelState:
     outcome: str
     observations: tuple[dict, dict]
     native_side: int | None = None
+    opponent_class_id: str | None = None
 
 
 class DuelClient:
@@ -91,7 +92,8 @@ class DuelClient:
             outcome = reply["outcome"]
             if outcome not in ("running", "a_win", "b_win", "draw", "timeout"):
                 raise ValueError("unknown bout outcome")
-            return DuelState(reply["episode"], reply["step"], outcome, (a, b), reply.get("nativeSide"))
+            return DuelState(reply["episode"], reply["step"], outcome, (a, b),
+                             reply.get("nativeSide"), reply.get("opponentClassId"))
         except (KeyError, TypeError, ValueError) as exc:
             raise ProtocolError(f"Invalid {command} response: {exc}") from exc
 
