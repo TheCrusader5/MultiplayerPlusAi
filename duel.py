@@ -33,6 +33,7 @@ class DuelState:
     step: int
     outcome: str
     observations: tuple[dict, dict]
+    native_side: int | None = None
 
 
 class DuelClient:
@@ -51,8 +52,10 @@ class DuelClient:
         finally:
             self.socket.close()
 
-    def reset(self) -> DuelState:
-        state = self._request("reset")
+    def reset(self, native_side: int | None = None) -> DuelState:
+        state = self._request("reset", nativeSide=native_side)
+        if state.native_side != native_side:
+            raise ProtocolError("The server did not start the requested opponent mode.")
         if state.step != 0 or state.outcome != "running" or (
             self.state is not None and state.episode <= self.state.episode
         ):
@@ -88,7 +91,7 @@ class DuelClient:
             outcome = reply["outcome"]
             if outcome not in ("running", "a_win", "b_win", "draw", "timeout"):
                 raise ValueError("unknown bout outcome")
-            return DuelState(reply["episode"], reply["step"], outcome, (a, b))
+            return DuelState(reply["episode"], reply["step"], outcome, (a, b), reply.get("nativeSide"))
         except (KeyError, TypeError, ValueError) as exc:
             raise ProtocolError(f"Invalid {command} response: {exc}") from exc
 
