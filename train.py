@@ -15,6 +15,9 @@ from observation import OBSERVATION_SIZE, combat_damage, decode_action, encode_o
 
 DAMAGE_POINTS_PER_HP = 1.0
 SURVIVAL_POINTS_PER_STEP = 0.001
+BLOCK_POINTS_PER_CONTACT = 0.5
+MAX_BLOCK_POINTS_PER_ROUND = 3.0
+MAX_ARENAS = 50
 
 
 class BannerlordDuel(gym.Env):
@@ -31,6 +34,7 @@ class BannerlordDuel(gym.Env):
         self.learner_side = 1 - self.learner_side
         self.damage_points = 0.0
         self.survival_points = 0.0
+        self.block_points = 0.0
         state = self.client.reset(native_side=1 - self.learner_side)
         if not state.opponent_class_id:
             raise ProtocolError("Deploy the server build with randomized duel bot characters.")
@@ -43,23 +47,28 @@ class BannerlordDuel(gym.Env):
         actions[self.learner_side] = decode_action(action, before.observations[self.learner_side]["self"])
         after = self.client.step(*actions)
         opponent_index = after.observations[other_side]["self"]["index"]
-        events = after.observations[self.learner_side]["combatFeedback"]
-        damage_dealt, _ = combat_damage(event for event in events if event["otherAgentIndex"] == opponent_index)
+        events = [event for event in after.observations[self.learner_side]["combatFeedback"]
+                  if event["otherAgentIndex"] == opponent_index]
+        damage_dealt, _ = combat_damage(events)
+        blocks = sum(event["kind"] == "BlockMade" for event in events)
+        block_points = min(blocks * BLOCK_POINTS_PER_CONTACT, MAX_BLOCK_POINTS_PER_ROUND - self.block_points)
         damage_points = DAMAGE_POINTS_PER_HP * damage_dealt
         learner_lost = after.outcome in ("draw", "b_win" if self.learner_side == 0 else "a_win")
         survival_points = 0.0 if learner_lost else SURVIVAL_POINTS_PER_STEP
         self.damage_points += damage_points
         self.survival_points += survival_points
-        reward = damage_points + survival_points
+        self.block_points += block_points
+        reward = damage_points + survival_points + block_points
 
         terminated = after.outcome in ("a_win", "b_win", "draw")
         truncated = after.outcome == "timeout"
         info = {"outcome": after.outcome, "learner_side": self.learner_side, "native_opponent": True,
                 "opponent_class_id": before.opponent_class_id}
         if terminated or truncated:
-            total = self.damage_points + self.survival_points
+            total = self.damage_points + self.survival_points + self.block_points
             print(f"[Duel {self.port}, round {after.episode}] {before.opponent_class_id} "
                   f"{after.outcome} | {self.damage_points:.3f} damage + {self.survival_points:.3f} survival "
+                  f"+ {self.block_points:.3f} blocking "
                   f"= {total:.3f} points", flush=True)
         return self._observation(after, self.learner_side), reward, terminated, truncated, info
 
@@ -120,8 +129,8 @@ def main():
     if args.updates < 1 or (args.rollout_steps is not None and
                             (args.rollout_steps < 64 or args.rollout_steps % 64)):
         parser.error("--updates must be positive and --rollout-steps must be a positive multiple of 64.")
-    if not 1 <= args.arenas <= 16 or not 1 <= args.port <= 65536 - args.arenas:
-        parser.error("Choose 1 to 16 arenas and a valid consecutive port range.")
+    if not 1 <= args.arenas <= MAX_ARENAS or not 1 <= args.port <= 65536 - args.arenas:
+        parser.error(f"Choose 1 to {MAX_ARENAS} arenas and a valid consecutive port range.")
     try:
         with ExitStack() as resources:
             duels = []

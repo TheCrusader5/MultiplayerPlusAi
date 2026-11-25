@@ -21,7 +21,7 @@ In Duel admin chat, stand facing a large clear area and enter $botduel batch 4. 
 .\.venv\Scripts\python.exe train.py --arenas 4 --rollout-steps 256 --output runs/native-4
 ```
 
-The four arenas use ports 49317–49320 and contribute 1,024 decisions to each PPO update. Each bout spawns a fresh opponent from a random duel-roster character class with the standard training loadout. To use a different starting port, pass it after the arena count in chat and pass --port to the trainer. Use $botduel stop to close the whole batch.
+The server and trainer support up to 50 arenas, subject to space on the map. The four arenas use ports 49317–49320 and contribute 1,024 decisions to each PPO update. Each bout spawns a fresh opponent from a random duel-roster character class with the standard training loadout. To use a different starting port, pass it after the arena count in chat and pass --port to the trainer. Use $botduel stop to close the whole batch.
 
 ## Protocol v3
 
@@ -29,4 +29,4 @@ The bridge uses newline-delimited UTF-8 JSON on 127.0.0.1:49317. Send a reset wi
 
 An action can include right and forward (-1 to 1), yaw and pitch (absolute degrees, optional), weapon (None, AttackLeft, AttackRight, AttackUp, AttackDown, BlockLeft, BlockRight, BlockUp, or BlockDown), and jump, kick, bash, and crouch booleans. Omitted controls are neutral. Omitted aim axes follow the server's aim rules.
 
-A successful reply contains episode, step, outcome and two observations. Each observation contains self, visibleAgents, and combatFeedback. The policy uses one visible opponent slot, relative position, and per-step combat feedback. The full snapshots remain available through DuelClient. The trainer awards 1 point per HP of damage dealt to the opponent and 0.001 points per decision the learner survives (up to 1.2 per round). Each completed round logs its opponent class, outcome, damage points, survival points, and total.
+A successful reply contains episode, step, outcome and two observations. Each observation contains self, visibleAgents, and combatFeedback. The policy uses one visible opponent slot, relative position, and per-step combat feedback. The full snapshots remain available through DuelClient. The trainer awards 1 point per HP of damage dealt to the opponent and 0.001 points per decision the learner survives. A confirmed block against the duel opponent earns 0.5 points, capped at 3 per round. Duels can run for up to 2,400 decisions (about 120 seconds of game time) and end early if a fighter goes out of bounds. Each completed round logs its opponent class, outcome, damage points, survival points, block points, and total.
