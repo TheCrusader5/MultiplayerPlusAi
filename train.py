@@ -16,8 +16,11 @@ from observation import OBSERVATION_SIZE, combat_damage, decode_action, encode_o
 
 DAMAGE_POINTS_PER_HP = 1.0
 SURVIVAL_POINTS_PER_STEP = 0.001
-BLOCK_POINTS_PER_CONTACT = 2.0
-MAX_BLOCK_POINTS_PER_ROUND = 12.0
+BLOCK_POINTS_PER_CONTACT = 10.0
+MAX_BLOCK_POINTS_PER_ROUND = 50.0
+SIGHT_POINTS_PER_STEP = 0.05
+MAX_SIGHT_POINTS_PER_ROUND = 5.0
+SIGHT_REWARD_DISTANCE = 4.0
 MAX_ARENAS = 50
 
 
@@ -38,6 +41,7 @@ class BannerlordDuel(gym.Env):
         self.damage_points = 0.0
         self.survival_points = 0.0
         self.block_points = 0.0
+        self.sight_points = 0.0
         self.opponent = self.next_opponent
         state = self.client.reset()
         return self._observation(state, self.learner_side), {}
@@ -51,7 +55,8 @@ class BannerlordDuel(gym.Env):
         actions[self.learner_side] = decode_action(action, before.observations[self.learner_side]["self"])
         after = self.client.step(*actions)
         opponent_index = after.observations[other_side]["self"]["index"]
-        events = [event for event in after.observations[self.learner_side]["combatFeedback"]
+        learner = after.observations[self.learner_side]
+        events = [event for event in learner["combatFeedback"]
                   if event["otherAgentIndex"] == opponent_index]
         damage_dealt, _ = combat_damage(events)
         blocks = sum(event["kind"] == "BlockMade" for event in events)
@@ -59,19 +64,27 @@ class BannerlordDuel(gym.Env):
         damage_points = DAMAGE_POINTS_PER_HP * damage_dealt
         learner_lost = after.outcome in ("draw", "b_win" if self.learner_side == 0 else "a_win")
         survival_points = 0.0 if learner_lost else SURVIVAL_POINTS_PER_STEP
+        sight_points = 0.0
+        if after.outcome == "running" and any(
+            agent["index"] == opponent_index and agent["relativePosition"][1] > 0
+            and sum(offset ** 2 for offset in agent["relativePosition"]) <= SIGHT_REWARD_DISTANCE ** 2
+            for agent in learner["visibleAgents"]
+        ):
+            sight_points = min(SIGHT_POINTS_PER_STEP, MAX_SIGHT_POINTS_PER_ROUND - self.sight_points)
         self.damage_points += damage_points
         self.survival_points += survival_points
         self.block_points += block_points
-        reward = damage_points + survival_points + block_points
+        self.sight_points += sight_points
+        reward = damage_points + survival_points + block_points + sight_points
 
         terminated = after.outcome in ("a_win", "b_win", "draw")
         truncated = after.outcome == "timeout"
         info = {"outcome": after.outcome, "learner_side": self.learner_side}
         if terminated or truncated:
-            total = self.damage_points + self.survival_points + self.block_points
+            total = self.damage_points + self.survival_points + self.block_points + self.sight_points
             print(f"[Duel {self.port}, round {after.episode}] self-play "
                   f"{after.outcome} | {self.damage_points:.3f} damage + {self.survival_points:.3f} survival "
-                  f"+ {self.block_points:.3f} blocking "
+                  f"+ {self.block_points:.3f} blocking + {self.sight_points:.3f} sight "
                   f"= {total:.3f} points", flush=True)
         return self._observation(after, self.learner_side), reward, terminated, truncated, info
 
