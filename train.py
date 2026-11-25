@@ -1,7 +1,8 @@
-"""Train a policy against native Bannerlord duel AI."""
+"""Train a Bannerlord duel policy through self-play."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from io import BytesIO
 from pathlib import Path
 
 import gymnasium as gym
@@ -9,14 +10,14 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
-from duel import ACTION_SIZES, Controls, DuelClient, ProtocolError
+from duel import ACTION_SIZES, DuelClient, ProtocolError
 from observation import OBSERVATION_SIZE, combat_damage, decode_action, encode_observation
 
 
 DAMAGE_POINTS_PER_HP = 1.0
 SURVIVAL_POINTS_PER_STEP = 0.001
-BLOCK_POINTS_PER_CONTACT = 0.5
-MAX_BLOCK_POINTS_PER_ROUND = 3.0
+BLOCK_POINTS_PER_CONTACT = 2.0
+MAX_BLOCK_POINTS_PER_ROUND = 12.0
 MAX_ARENAS = 50
 
 
@@ -28,6 +29,8 @@ class BannerlordDuel(gym.Env):
         self.action_space = gym.spaces.MultiDiscrete(ACTION_SIZES)
         self.observation_space = gym.spaces.Box(-1.0, 1.0, (OBSERVATION_SIZE,), np.float32)
         self.learner_side = 1
+        self.next_opponent = None
+        self.opponent = None
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -35,15 +38,16 @@ class BannerlordDuel(gym.Env):
         self.damage_points = 0.0
         self.survival_points = 0.0
         self.block_points = 0.0
-        state = self.client.reset(native_side=1 - self.learner_side)
-        if not state.opponent_class_id:
-            raise ProtocolError("Deploy the server build with randomized duel bot characters.")
+        self.opponent = self.next_opponent
+        state = self.client.reset()
         return self._observation(state, self.learner_side), {}
 
     def step(self, action):
         before = self.client.state
         other_side = 1 - self.learner_side
-        actions = [Controls(), Controls()]
+        opponent_action, _ = self.opponent.predict(self._observation(before, other_side))
+        opponent_controls = decode_action(opponent_action, before.observations[other_side]["self"])
+        actions = [opponent_controls, opponent_controls]
         actions[self.learner_side] = decode_action(action, before.observations[self.learner_side]["self"])
         after = self.client.step(*actions)
         opponent_index = after.observations[other_side]["self"]["index"]
@@ -62,11 +66,10 @@ class BannerlordDuel(gym.Env):
 
         terminated = after.outcome in ("a_win", "b_win", "draw")
         truncated = after.outcome == "timeout"
-        info = {"outcome": after.outcome, "learner_side": self.learner_side, "native_opponent": True,
-                "opponent_class_id": before.opponent_class_id}
+        info = {"outcome": after.outcome, "learner_side": self.learner_side}
         if terminated or truncated:
             total = self.damage_points + self.survival_points + self.block_points
-            print(f"[Duel {self.port}, round {after.episode}] {before.opponent_class_id} "
+            print(f"[Duel {self.port}, round {after.episode}] self-play "
                   f"{after.outcome} | {self.damage_points:.3f} damage + {self.survival_points:.3f} survival "
                   f"+ {self.block_points:.3f} blocking "
                   f"= {total:.3f} points", flush=True)
@@ -116,6 +119,17 @@ class ParallelDuelEnv(DummyVecEnv):
         return observation, reward, done, info, reset_info
 
 
+def snapshot_policy(policy):
+    # Rebuild from saved weights to keep the opponent independent of PPO's updates.
+    with BytesIO() as checkpoint:
+        policy.save(checkpoint)
+        checkpoint.seek(0)
+        opponent = type(policy).load(checkpoint, device=policy.device)
+    opponent.requires_grad_(False)
+    opponent.set_training_mode(False)
+    return opponent
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=49317)
@@ -155,6 +169,10 @@ def main():
             args.output.mkdir(parents=True, exist_ok=False)
             decisions_per_update = model.n_steps * len(duels)
             for update in range(1, args.updates + 1):
+                opponent = snapshot_policy(model.policy)
+                # Ongoing bouts keep their current opponent until the next reset.
+                for duel in duels:
+                    duel.next_opponent = opponent
                 model.learn(total_timesteps=decisions_per_update, reset_num_timesteps=False)
                 model.save(args.output / f"checkpoint-{update:04d}")
     except (OSError, ProtocolError) as exc:
